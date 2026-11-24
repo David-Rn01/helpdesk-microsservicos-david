@@ -6,8 +6,16 @@ permissions:
   contents: read
 
 jobs:
+  # Cada serviço é testado sozinho, com as próprias dependências
   testes:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        servico: [gateway, servicos/usuarios, servicos/inventario, servicos/chamados, servicos/notificacoes]
+    defaults:
+      run:
+        working-directory: ${{ matrix.servico }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -15,8 +23,17 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -r requirements.txt pytest==9.2.0 httpx==0.28.1 pip-audit==2.10.1
       - name: Testes (inclui testes de segurança)
         run: pytest -q
       - name: Dependências com falhas conhecidas
         run: pip-audit -r requirements.txt
+
+  # Confere se todas as imagens são construídas
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: docker compose build

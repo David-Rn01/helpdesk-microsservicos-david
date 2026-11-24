@@ -1,22 +1,124 @@
+# HelpDesk TI em microsserviços.
+# Sobe tudo com:  docker compose up --build
+# Só o gateway publica porta. Serviços, bancos e fila ficam só na rede interna do Docker.
+
+x-servico: &servico
+  env_file:
+    - path: .env
+      required: false
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+  networks:
+    - interna
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/saude', timeout=2)"]
+    interval: 10s
+    timeout: 3s
+    retries: 5
+    start_period: 10s
+
 services:
-  helpdesk:
-    build: .
-    ports:
-      - "127.0.0.1:8000:8000"   # só acessível pelo próprio computador
-    env_file:
-      - path: .env
-        required: false
+  # Gera um JWT_SEGREDO aleatório na primeira vez (se não houver um no .env).
+  # Fica num volume lido por todos os serviços: o segredo nunca está no código.
+  segredo:
+    image: alpine:3.20
+    command: >
+      sh -c "test -s /segredos/jwt ||
+             (head -c 48 /dev/urandom | base64 | tr -d '\n=+/' > /segredos/jwt && chmod 444 /segredos/jwt)"
+    volumes:
+      - segredos:/segredos
+    network_mode: none
+
+  # Fila de eventos (bônus): Chamados publica, Notificações consome
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - dados-fila:/data
+    restart: unless-stopped
+    networks:
+      - interna
+
+  usuarios:
+    <<: *servico
+    build: ./servicos/usuarios
     environment:
       DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
     volumes:
-      - dados:/dados
-    read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
+      - dados-usuarios:/dados
+      - segredos:/segredos:ro
+    depends_on:
+      segredo:
+        condition: service_completed_successfully
 
+  inventario:
+    <<: *servico
+    build: ./servicos/inventario
+    environment:
+      DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
+    volumes:
+      - dados-inventario:/dados
+      - segredos:/segredos:ro
+    depends_on:
+      segredo:
+        condition: service_completed_successfully
+
+  chamados:
+    <<: *servico
+    build: ./servicos/chamados
+    environment:
+      DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
+      USUARIOS_URL: http://usuarios:8000
+      INVENTARIO_URL: http://inventario:8000
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - dados-chamados:/dados
+      - segredos:/segredos:ro
+    depends_on:
+      segredo:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  notificacoes:
+    <<: *servico
+    build: ./servicos/notificacoes
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - dados-notificacoes:/dados
+      - segredos:/segredos:ro
+    depends_on:
+      segredo:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  gateway:
+    <<: *servico
+    build: ./gateway
+    ports:
+      - "127.0.0.1:8000:8000"   # único ponto de entrada (só acessível pelo próprio computador)
+    depends_on:
+      - usuarios
+      - inventario
+      - chamados
+      - notificacoes
+
+networks:
+  interna:
+
+# Um volume (banco) por serviço
 volumes:
-  dados:
+  segredos:
+  dados-fila:
+  dados-usuarios:
+  dados-inventario:
+  dados-chamados:
+  dados-notificacoes:
