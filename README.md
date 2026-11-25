@@ -1,6 +1,6 @@
 # HelpDesk TI · versão microsserviços
 
-> 🎥 **Vídeo de demonstração:** _cole aqui o link do YouTube (não listado) ou do Google Drive_
+> 🎥 **Vídeo de demonstração:** https://drive.google.com/drive/folders/12XjZII4wYaV_jpfm9aXU6oFsU1ZCcj_f
 
 Sistema de chamados de TI (no estilo de um GLPI simplificado), feito em **Python + FastAPI**.
 Começou como um **monólito** e foi separado em **microsserviços** na atividade de
